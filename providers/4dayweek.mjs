@@ -53,7 +53,7 @@ function toEpochMs(seconds) {
 }
 
 /**
- * Normalize a single 4 Day Week job. Exported for unit tests.
+ * Normalize a single 4 Day Week job.
  *
  * Field mapping → the normalized Job shape:
  *   - title:    `title`, trimmed (postings without one are dropped).
@@ -70,7 +70,7 @@ function toEpochMs(seconds) {
  *
  * @param {any} j
  * @param {string} [fallbackCompany]
- * @returns {{ title: string, url: string, company: string, location: string, postedAt?: number } | null}
+ * @returns {import('./_types.js').Job | null}
  */
 export function normalize4dwJob(j, fallbackCompany) {
   if (!j || typeof j !== 'object') return null;
@@ -106,10 +106,55 @@ export function normalize4dwJob(j, fallbackCompany) {
   return job;
 }
 
+/**
+ * Detect 4 Day Week URLs.
+ * @param {import('./_types.js').PortalEntry|string} entry - PortalEntry object or URL string
+ * @returns {{ url: string } | null}
+ */
+export function detect(entry) {
+  const url = typeof entry === 'string' ? entry : (entry.careers_url || '');
+  const match = url.match(/(4dayweek\.io|4dayweek\.com)/i);
+  if (!match) return null;
+  return { url };
+}
+
+/**
+ * Normalize a single 4 Day Week job to the standard Job shape.
+ * @param {any} j - Raw job element from 4 Day Week API
+ * @param {string} [fallbackCompany] - Portal entry name
+ * @returns {import('./_types.js').Job | null}
+ */
+export function normalize(j, fallbackCompany) {
+  const normalized = normalize4dwJob(j, fallbackCompany);
+  if (!normalized) return null;
+  return {
+    title: normalized.title,
+    url: normalized.url,
+    company: normalized.company,
+    location: normalized.location,
+    postedAt: normalized.postedAt,
+  };
+}
+
 /** @type {Provider} */
 export default {
   id: '4dayweek',
 
+  detect,
+
+  normalize,
+
+  rateLimit: {
+    requests: 30,
+    window: '1min',
+  },
+
+  /**
+   * Fetches and normalizes postings from the 4 Day Week public JSON API.
+   * @param {{ name?: string }} entry - The job_boards entry being processed.
+   * @param {{ fetchJson: (url: string, opts?: { redirect?: 'error'|'follow'|'manual' }) => Promise<any> }} ctx - HTTP context.
+   * @returns {Promise<import('./_types.js').Job[]>}
+   */
   async fetch(entry, ctx) {
     assertFourDayUrl(FEED_BASE);
     const maxPages = resolveMaxPages(entry);
@@ -127,7 +172,15 @@ export default {
       }
       for (const j of json.jobs) {
         const normalized = normalize4dwJob(j, fallbackCompany);
-        if (normalized) out.push(normalized);
+        if (normalized) {
+          out.push({
+            title: normalized.title,
+            url: normalized.url,
+            company: normalized.company,
+            location: normalized.location,
+            postedAt: normalized.postedAt,
+          });
+        }
       }
       if (json.has_more === false) break; // last page per the API flag
       if (json.jobs.length < PER_PAGE) break; // short page → last page

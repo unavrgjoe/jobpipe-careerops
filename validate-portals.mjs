@@ -146,8 +146,76 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
     add(errors, 'tracked_companies', 'tracked_companies must be an array when set');
   }
 
+  const jobBoards = config.job_boards;
+  if (jobBoards !== undefined && !Array.isArray(jobBoards)) {
+    add(errors, 'job_boards', 'job_boards must be an array when set');
+  }
+
   const seenEnabledNames = new Map();
-  if (Array.isArray(companies)) {
+  if (Array.isArray(jobBoards)) {
+    for (const [idx, board] of jobBoards.entries()) {
+      const base = `job_boards[${idx}]`;
+      if (!isObject(board)) {
+        add(errors, base, 'job board entry must be an object');
+        continue;
+      }
+      if (board.enabled === false) continue;
+
+      if (typeof board.name !== 'string' || board.name.trim() === '') {
+        add(errors, `${base}.name`, 'enabled job board must have a non-empty string name');
+      } else {
+        const normalized = normalizeName(board.name);
+        if (seenEnabledNames.has(normalized)) {
+          add(warnings, `${base}.name`, `duplicate enabled job board name also seen at ${seenEnabledNames.get(normalized)}`);
+        } else {
+          seenEnabledNames.set(normalized, `${base}.name`);
+        }
+      }
+
+      if (board.provider !== undefined) {
+        if (typeof board.provider !== 'string' || board.provider.trim() === '') {
+          add(errors, `${base}.provider`, 'provider must be a non-empty string when set');
+        } else if (!providerIds.has(board.provider)) {
+          add(errors, `${base}.provider`, `unknown provider "${board.provider}"`);
+        }
+      } else {
+        add(errors, `${base}.provider`, 'job board entry must have an explicit provider');
+      }
+
+      if (board.rate_limit !== undefined && (!Number.isFinite(Number(board.rate_limit)) || Number(board.rate_limit) <= 0)) {
+        add(errors, `${base}.rate_limit`, 'rate_limit must be a positive number when set');
+      }
+    }
+  }
+
+  if (config.scan !== undefined) {
+    if (!isObject(config.scan)) {
+      add(errors, 'scan', 'scan configuration must be an object');
+    } else {
+      if (config.scan.auto_detect !== undefined && typeof config.scan.auto_detect !== 'boolean') {
+        add(errors, 'scan.auto_detect', 'auto_detect must be a boolean');
+      }
+      if (config.scan.default_sources !== undefined && (!Array.isArray(config.scan.default_sources) || config.scan.default_sources.some(s => typeof s !== 'string' || !['company', 'board'].includes(s)))) {
+        add(errors, 'scan.default_sources', 'default_sources must be an array of "company" or "board" strings');
+      }
+      if (config.scan.filters !== undefined && !Array.isArray(config.scan.filters)) {
+        add(errors, 'scan.filters', 'filters must be an array');
+      } else if (Array.isArray(config.scan.filters)) {
+        for (const [idx, filter] of config.scan.filters.entries()) {
+          const base = `scan.filters[${idx}]`;
+          if (!isObject(filter)) {
+            add(errors, base, 'filter entry must be an object');
+          } else {
+            if (filter.source !== undefined && (typeof filter.source !== 'string' || !['company', 'board', 'company|board'].includes(filter.source))) {
+              add(errors, `${base}.source`, 'source must be "company", "board", or "company|board"');
+            }
+          }
+        }
+      }
+}
+}
+
+if (Array.isArray(companies)) {
     for (const [idx, company] of companies.entries()) {
       const base = `tracked_companies[${idx}]`;
       if (!isObject(company)) {

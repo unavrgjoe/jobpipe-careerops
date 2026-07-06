@@ -34,6 +34,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, rea
 import { pathToFileURL, fileURLToPath } from 'url';
 import path from 'path';
 import yaml from 'js-yaml';
+import { createHash } from 'crypto';
 
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTrustValidator } from './providers/_trust-validator.mjs';
@@ -313,6 +314,26 @@ export function addDays(dateStr, days) {
   return date.toISOString().slice(0, 10);
 }
 
+export function createContentHash(description = '') {
+  // Return empty hash for empty description (no content to hash)
+  if (!description || description.trim() === '') return '';
+  // SHA256 hash of the description
+  return createHash('sha256').update(description.trim()).digest('hex');
+}
+
+/**
+ * Check if a job is fresh (posted within the freshness window).
+ * @param {Object} job - Job object with postedAt (epoch ms) or postedDate (ISO string)
+ * @param {number} [windowDays=7] - Freshness window in days
+ * @returns {boolean}
+ */
+export function isFresh(job, windowDays = 7) {
+  const postedAt = job.postedAt ?? (job.postedDate ? Date.parse(job.postedDate) : 0);
+  if (!postedAt) return true; // No date = assume fresh
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  return postedAt > Date.now() - windowMs;
+}
+
 export function loadReApplyWindows(profilePath = PROFILE_PATH) {
   if (!existsSync(profilePath)) return {};
   try {
@@ -524,16 +545,39 @@ function scanHistoryPolicy(config = {}) {
 
 export function loadSeenUrls(policy = {}) {
   const seen = new Set();
+  const seenContent = new Map(); // contentHash -> url
   let recheckEligible = 0;
 
   // scan-history.tsv
   if (existsSync(SCAN_HISTORY_PATH)) {
     const lines = readFileSync(SCAN_HISTORY_PATH, 'utf-8').split('\n');
+    const header = lines[0];
+    const colCount = header ? header.split('\t').length : 0;
+
     for (const line of lines.slice(1)) { // skip header
-      const [url, firstSeen, , , , status = 'added'] = line.split('\t');
+      const cols = line.split('\t');
+      // Old format: url, first_seen, portal, title, company, status (6 cols)
+      // New format: url, first_seen, portal, title, company, status, content_hash, posted_date, expires_at (9 cols)
+      const url = cols[0];
+      const firstSeen = colCount >= 2 ? cols[1] : '';
+      const status = colCount >= 6 ? cols[5] : 'added';
+      const contentHash = colCount >= 7 ? cols[6] : '';
       if (!url) continue;
-      if (shouldDedupScanHistoryRow({ firstSeen, status }, policy)) seen.add(url);
-      else recheckEligible++;
+      
+      // URL-based dedup (permanent) for ATS sources
+      if (shouldDedupScanHistoryRow({ firstSeen, status }, policy)) {
+        seen.add(url);
+      } else {
+        recheckEligible++;
+      }
+      
+      // Content-based dedup for boards without stable URLs
+      // Only apply if we have a content hash and it's not a permanent dedup status
+      if (contentHash && !shouldDedupScanHistoryRow({ firstSeen, status }, policy)) {
+        if (!seenContent.has(contentHash)) {
+          seenContent.set(contentHash, url);
+        }
+      }
     }
   }
 
@@ -553,7 +597,7 @@ export function loadSeenUrls(policy = {}) {
     }
   }
 
-  return { seen, recheckEligible };
+  return { seen, seenContent, recheckEligible };
 }
 
 function loadSeenCompanyRoles() {
@@ -642,6 +686,8 @@ export function formatPipelineOffer(offer) {
 }
 
 export function formatScanHistoryRow(offer, date, status = 'added') {
+  const contentHash = createContentHash(offer.description);
+  const expiresAt = addDays(date, 30);
   return [
     normalizeScanUrl(offer.url),
     date,
@@ -649,7 +695,9 @@ export function formatScanHistoryRow(offer, date, status = 'added') {
     offer.title,
     offer.company,
     status,
-    offer.location || '',
+    contentHash,
+    date,
+    expiresAt,
   ].map(sanitizeTsvField).join('\t');
 }
 
@@ -705,13 +753,12 @@ export function appendToPipeline(offers) {
 }
 
 export function appendToScanHistory(offers, date, status = 'added') {
-  // Ensure file + header exist. Location appended as 7th column for non-breaking
-  // backward compat — older scan-history.tsv files with 6 columns still parse fine
-  // since loadSeenUrls only reads column 0. `status` is parameterized so callers
-  // can record verify outcomes (`skipped_expired`, etc.) without the legacy
-  // `(expired)` suffix in `source`.
+  // Ensure file + header exist. New 9-column format:
+  // url, first_seen, portal, title, company, status, content_hash, posted_date, expires_at
+  // Backward compat: loadSeenUrls reads only first 6 columns (url-first_seen-portal-title-company-status)
+  // `status` is parameterized so callers can record verify outcomes (`skipped_expired`, etc.)
   if (!existsSync(SCAN_HISTORY_PATH)) {
-    writeFileSync(SCAN_HISTORY_PATH, 'url\tfirst_seen\tportal\ttitle\tcompany\tstatus\tlocation\n', 'utf-8');
+    writeFileSync(SCAN_HISTORY_PATH, 'url\tfirst_seen\tportal\ttitle\tcompany\tstatus\tcontent_hash\tposted_date\texpires_at\n', 'utf-8');
   }
 
   const lines = offers.map(o => formatScanHistoryRow(o, date, status)).join('\n') + '\n';
@@ -719,16 +766,130 @@ export function appendToScanHistory(offers, date, status = 'added') {
   appendFileSync(SCAN_HISTORY_PATH, lines, 'utf-8');
 }
 
-// ── Parallel fetch with concurrency limit ───────────────────────────
+// ── Parallel fetch with concurrency limit + token bucket ──────────────
+// Create token buckets per provider from rate_limit config
+function createProviderBuckets(config, providers) {
+  const buckets = new Map();
+  
+  // Collect all provider configs from tracked_companies and job_boards
+  const allEntries = [
+    ...(config.tracked_companies || []),
+    ...(config.job_boards || []),
+  ];
+  
+  for (const entry of allEntries) {
+    if (!entry || entry.enabled === false) continue;
+    if (!entry.provider) continue;
+    
+    const providerId = entry.provider;
+    if (buckets.has(providerId)) continue;
+    
+    // Get rate_limit from entry, or from provider's default rateLimit
+    let rateLimit = entry.rate_limit;
+    if (!rateLimit) {
+      const provider = providers.get(providerId);
+      if (provider?.rateLimit) {
+        const { requests, window } = provider.rateLimit;
+        if (requests && window) {
+          rateLimit = `${requests}/${window}`;
+        }
+      }
+    }
+    
+    // Default rate limit if not specified
+    if (!rateLimit) {
+      rateLimit = '100/min';
+    }
+    
+    // Parse rate string like "30/min" or "100/hour"
+    const match = rateLimit.match(/^(\d+)\s*\/\s*(\w+)$/i);
+    if (!match) continue;
+    
+    const [, count, unit] = match;
+    const countNum = parseInt(count, 10);
+    
+    let tokensPerSecond;
+    switch (unit.toLowerCase()) {
+      case 'sec':
+      case 'second':
+      case 's':
+        tokensPerSecond = countNum / 1000;
+        break;
+      case 'min':
+      case 'minute':
+      case 'm':
+        tokensPerSecond = countNum / 60 / 1000;
+        break;
+      case 'hour':
+      case 'h':
+        tokensPerSecond = countNum / 60 / 60 / 1000;
+        break;
+      default:
+        continue;
+    }
+    
+    // Capacity = 2x the rate per window for burst tolerance
+    const capacity = Math.max(2, countNum * 2);
+    
+    let tokens = capacity;
+    let lastRefill = Date.now();
+    
+    const bucket = {
+      async acquire(tokensToAcquire = 1) {
+        await new Promise(resolve => {
+          const check = () => {
+            const now = Date.now();
+            const elapsed = now - lastRefill;
+            const refilled = elapsed * tokensPerSecond;
+            
+            tokens = Math.min(capacity, tokens + refilled);
+            lastRefill = now;
+            
+            if (tokens >= tokensToAcquire) {
+              tokens -= tokensToAcquire;
+              resolve();
+            } else {
+              const waitTime = Math.max(1, Math.ceil((tokensToAcquire - tokens) / tokensPerSecond));
+              setTimeout(check, waitTime);
+            }
+          };
+          check();
+        });
+      },
+      tryAcquire(tokensToAcquire = 1) {
+        const now = Date.now();
+        const elapsed = now - lastRefill;
+        const refilled = elapsed * tokensPerSecond;
+        
+        tokens = Math.min(capacity, tokens + refilled);
+        lastRefill = now;
+        
+        if (tokens >= tokensToAcquire) {
+          tokens -= tokensToAcquire;
+          return true;
+        }
+        return false;
+      },
+    };
+    
+    buckets.set(providerId, bucket);
+  }
+  
+  return buckets;
+}
 
-async function parallelFetch(tasks, limit) {
+async function parallelFetch(tasks, limit, providerBuckets) {
   const results = [];
   let i = 0;
 
   async function next() {
     while (i < tasks.length) {
       const task = tasks[i++];
-      results.push(await task());
+      try {
+        results.push(await task());
+      } catch (err) {
+        results.push({ error: err.message });
+      }
     }
   }
 
@@ -876,8 +1037,32 @@ async function main() {
   // --rediscover-404: when a tracked company's URL 404/410s, search for the
   // moved role and re-verify before marking it expired. Opt-in; rides on --verify.
   const rediscover = args.includes('--rediscover-404');
-  const companyFlag = args.indexOf('--company');
-  const filterCompany = companyFlag !== -1 ? args[companyFlag + 1]?.toLowerCase() : null;
+  // --parallel N: concurrent workers for fetching (default 10, env SCAN_PARALLEL)
+  const parallelArg = args.find((a) => a === '--parallel' || a.startsWith('--parallel='));
+  const parallel = parallelArg ? (Number(parallelArg.split('=')[1]) || 10) : (Number(process.env.SCAN_PARALLEL) || 10);
+  // --fresh-only: only include jobs posted within the freshness window (default 7 days)
+  const freshOnly = args.includes('--fresh-only');
+  const freshOnlyDaysArg = args.find((a) => a.startsWith('--fresh-only='));
+  const freshOnlyDays = freshOnlyDaysArg ? (Number(freshOnlyDaysArg.split('=')[1]) || 7) : 7;
+  
+  // Support both --company NAME and --company=NAME formats
+  const companyArg = args.find((a) => a === '--company' || a.startsWith('--company='));
+  const filterCompany = companyArg
+    ? (companyArg.startsWith('--company=') ? companyArg.split('=')[1]?.toLowerCase() : args[args.indexOf('--company') + 1]?.toLowerCase())
+    : null;
+  
+  // --source=company|board|all: filter by source type
+  // Support both --source TYPE and --source=TYPE formats
+  const sourceArgIdx = args.findIndex((a) => a === '--source' || a.startsWith('--source='));
+  let filterSource = 'all';
+  if (sourceArgIdx !== -1) {
+    const sourceArg = args[sourceArgIdx];
+    if (sourceArg.startsWith('--source=')) {
+      filterSource = sourceArg.split('=')[1] || 'all';
+    } else if (sourceArgIdx + 1 < args.length) {
+      filterSource = args[sourceArgIdx + 1];
+    }
+  }
 
   // 1. Load providers
   const providers = await loadProviders(PROVIDERS_DIR);
@@ -926,7 +1111,6 @@ async function main() {
   // 3. Resolve a provider for each enabled company / board
   const targets = [];
   let skippedCount = 0;
-  let boardCount = 0;
   const resolveErrors = [];
   const agentHandoff = [];
 
@@ -965,15 +1149,24 @@ async function main() {
       }
       
       targets.push({ ...entry, _provider: resolved.provider, _isBoard: isBoard });
-      if (isBoard) boardCount++;
     }
   }
 
-  resolveEntries(companies);
+resolveEntries(companies);
   resolveEntries(boards, { isBoard: true });
+  
+  // Apply --source filter
+  let filteredTargets = targets;
+  if (filterSource === 'company') {
+    filteredTargets = targets.filter(t => !t._isBoard);
+  } else if (filterSource === 'board') {
+    filteredTargets = targets.filter(t => t._isBoard);
+  }
+  // 'all' means no filtering
 
-  const localParserCount = targets.filter(t => t._provider.id === 'local-parser').length;
-  const companyCount = targets.length - boardCount;
+  const localParserCount = filteredTargets.filter(t => t._provider.id === 'local-parser').length;
+  const companyCount = filteredTargets.filter(t => !t._isBoard).length;
+  const boardCount = filteredTargets.filter(t => t._isBoard).length;
   const parts = [`${companyCount} companies`];
   if (boardCount > 0) parts.push(`${boardCount} job boards`);
   parts.push(`${localParserCount} local parser`);
@@ -986,6 +1179,32 @@ async function main() {
   const seenUrlState = loadSeenUrls(historyPolicy);
   const seenUrls = seenUrlState.seen;
   const seenCompanyRoles = loadSeenCompanyRoles();
+
+  // Create token buckets per provider from rate_limit config
+  const { createTokenBucket } = await import('./providers/_http.mjs');
+  const providerBuckets = new Map();
+  for (const target of filteredTargets) {
+    const providerId = target._provider.id;
+    if (providerBuckets.has(providerId)) continue;
+    
+    // Get rate_limit from portals.yml entry (numeric requests per minute)
+    let rateLimit = target.rate_limit;
+    if (!rateLimit && target._provider.rateLimit) {
+      const { requests, window } = target._provider.rateLimit;
+      if (requests && window) {
+        rateLimit = `${requests}/${window}`;
+      }
+    }
+    // Convert numeric rate_limit (requests per minute) to "N/min" format
+    if (typeof rateLimit === 'number') {
+      rateLimit = `${rateLimit}/min`;
+    }
+    if (!rateLimit) {
+      rateLimit = '100/min';
+    }
+    
+    providerBuckets.set(providerId, createTokenBucket({ rate: rateLimit, capacity: 10 }));
+  }
 
   // 5. Fetch from each target
   const date = new Date().toISOString().slice(0, 10);
@@ -1003,11 +1222,14 @@ async function main() {
   const newOffers = [];
   const errors = [...resolveErrors];
 
-  const tasks = targets.map(company => async () => {
+  const tasks = filteredTargets.map(company => async () => {
     let provider = company._provider;
+    const bucket = providerBuckets.get(provider.id);
     const ctx = makeHttpCtx();
     let sourceName = provider.id === 'local-parser' ? 'local-parser' : `${provider.id}-api`;
     try {
+      // Acquire token from bucket before making request
+      if (bucket) await bucket.acquire();
       let jobs;
       try {
         jobs = await provider.fetch(company, ctx);
@@ -1055,9 +1277,25 @@ async function main() {
           totalFilteredContent++;
           continue;
         }
+        // Freshness filter (--fresh-only)
+        if (freshOnly && !isFresh(job, freshOnlyDays)) {
+          continue;
+        }
         if (seenUrls.has(job.url)) {
           totalDupes++;
           continue;
+        }
+        // Content-hash dedup for board sources (no stable URLs)
+        const isBoardSource = company._isBoard === true;
+        if (isBoardSource && job.description) {
+          const contentHash = createContentHash(job.description);
+          if (seenUrlState.seenContent?.has(contentHash)) {
+            totalDupes++;
+            continue;
+          }
+          // Track content hash for future dedup within this scan
+          if (!seenUrlState.seenContent) seenUrlState.seenContent = new Map();
+          seenUrlState.seenContent.set(contentHash, job.url);
         }
         const key = `${job.company.toLowerCase()}::${job.title.toLowerCase()}`;
         if (seenCompanyRoles.has(key)) {
@@ -1092,7 +1330,7 @@ async function main() {
     }
   });
 
-  await parallelFetch(tasks, CONCURRENCY);
+  await parallelFetch(tasks, parallel, providerBuckets);
 
   // 5.5. Optional liveness verification — drop expired and guard-rejected postings
   let verifiedOffers = newOffers;
@@ -1165,8 +1403,8 @@ async function main() {
   console.log(`\n${'━'.repeat(45)}`);
   console.log(`Portal Scan — ${date}`);
   console.log(`${'━'.repeat(45)}`);
-  const summaryCompanies = targets.filter(t => !t._isBoard).length;
-  const summaryBoards = targets.filter(t => t._isBoard).length;
+  const summaryCompanies = filteredTargets.filter(t => !t._isBoard).length;
+  const summaryBoards = filteredTargets.filter(t => t._isBoard).length;
   console.log(`Companies scanned:     ${summaryCompanies}`);
   if (summaryBoards > 0) console.log(`Job boards scanned:    ${summaryBoards}`);
   console.log(`Total jobs found:      ${totalFound}`);

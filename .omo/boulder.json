@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "active_work_id": "job-discovery-porting-5370adfe",
+  "works": {
+    "job-discovery-porting-5370adfe": {
+      "work_id": "job-discovery-porting-5370adfe",
+      "active_plan": "C:\\jobpipe-careerops\\.omo\\plans\\job-discovery-porting.md",
+      "plan_name": "job-discovery-porting",
+      "status": "completed",
+      "started_at": "2026-07-05T04:45:05.696Z",
+      "updated_at": "2026-07-06T09:16:42.780Z",
+      "session_ids": [
+        "opencode:ses_0d9cd9d26ffeadxxGD25wWdUKg"
+      ],
+      "session_origins": {
+        "opencode:ses_0d9cd9d26ffeadxxGD25wWdUKg": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Provider scaffolding — create provider template + shared HTTP utilities",
+          "session_id": "opencode:ses_0cf5196b2ffeLCcbZkyNUnzWey",
+          "agent": "Sisyphus-Junior",
+          "category": "quick",
+          "started_at": "2026-07-05T05:02:16.187Z",
+          "status": "completed",
+          "updated_at": "2026-07-05T05:44:53.188Z",
+          "ended_at": "2026-07-05T05:44:53.187Z",
+          "elapsed_ms": 2557000
+        },
+        "todo:3": {
+          "task_key": "todo:3",
+          "task_label": "3",
+          "task_title": "scan-history.tsv migration — add content_hash + posted_date columns",
+          "session_id": "opencode:ses_0ca69add4ffevEokhKGX2iQtny",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-07-05T06:32:44.205Z",
+          "status": "completed",
+          "updated_at": "2026-07-06T07:28:06.930Z",
+          "ended_at": "2026-07-06T07:28:06.930Z",
+          "elapsed_ms": 89722725
+        }
+      },
+      "ended_at": "2026-07-06T09:16:42.780Z",
+      "elapsed_ms": 102697084
+    }
+  },
+  "active_plan": "C:\\jobpipe-careerops\\.omo\\plans\\job-discovery-porting.md",
+  "started_at": "2026-07-05T04:45:05.696Z",
+  "status": "completed",
+  "updated_at": "2026-07-06T09:16:42.780Z",
+  "session_ids": [
+    "opencode:ses_0d9cd9d26ffeadxxGD25wWdUKg"
+  ],
+  "session_origins": {
+    "opencode:ses_0d9cd9d26ffeadxxGD25wWdUKg": "direct"
+  },
+  "plan_name": "job-discovery-porting",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Provider scaffolding — create provider template + shared HTTP utilities",
+      "session_id": "opencode:ses_0cf5196b2ffeLCcbZkyNUnzWey",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "started_at": "2026-07-05T05:02:16.187Z",
+      "status": "completed",
+      "updated_at": "2026-07-05T05:44:53.188Z",
+      "ended_at": "2026-07-05T05:44:53.187Z",
+      "elapsed_ms": 2557000
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "scan-history.tsv migration — add content_hash + posted_date columns",
+      "session_id": "opencode:ses_0ca69add4ffevEokhKGX2iQtny",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "started_at": "2026-07-05T06:32:44.205Z",
+      "status": "completed",
+      "updated_at": "2026-07-06T07:28:06.930Z",
+      "ended_at": "2026-07-06T07:28:06.930Z",
+      "elapsed_ms": 89722725
+    }
+  },
+  "agent": "atlas",
+  "ended_at": "2026-07-06T09:16:42.780Z",
+  "elapsed_ms": 102697084
+}

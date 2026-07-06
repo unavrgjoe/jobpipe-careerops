@@ -1,0 +1,11 @@
+url	first_seen	portal	title	company	status	content_hash	posted_date	expires_at
+https://example.com/job1	2024-01-01	linkedin	Software Engineer	CompanyA	added	abc123	2024-01-01	2024-01-31
+https://example.com/job1	2024-01-02	linkedin	Software Engineer	CompanyA	added	abc123	2024-01-01	2024-01-31
+https://example.com/job2	2024-01-01	linkedin	Software Engineer	CompanyB	skipped_invalid_url	def456	2024-01-01	2024-01-31
+https://example.com/job3	2024-01-01	linkedin	Software Engineer	CompanyC	added	ghi789	2024-01-01	2024-01-31
+https://example.com/job4	2024-01-01	remoteok	Software Engineer	CompanyD	added	jkl012	2024-01-01	2024-01-31
+https://example.com/job5	2024-01-01	remoteok	Software Engineer	CompanyD	added	mno345	2024-01-01	2024-01-31
+https://example.com/job6	2024-01-01	weworkremotely	Software Engineer	CompanyE	added	pqr678	2024-01-01	2024-01-31
+https://example.com/job7	2024-01-01	weworkremotely	Software Engineer	CompanyF	added	stu901	2024-01-01	2024-01-31
+https://example.com/job8	2024-01-01	linkedin	DevOps Engineer	CompanyA	added	vwx234	2024-01-01	2024-01-31
+https://example.com/job9	2024-01-01	linkedin	Software Engineer	CompanyG	skipped_blocked_host	yz0123	2024-01-01	2024-01-31

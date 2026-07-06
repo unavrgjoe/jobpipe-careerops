@@ -118,6 +118,39 @@ Or paste a JD directly to run the full pipeline.
 
 ---
 
+## Scan Mode Help
+
+When the user invokes `/career-ops scan` (or asks to run scan mode), the following flags and options are available:
+
+```
+Usage: node scan.mjs [options]
+
+Options:
+  --dry-run              Preview without writing files
+  --verify               Playwright liveness check (drops expired postings)
+  --headed-fallback      Retry anti-bot-blocked URLs in headed browser (needs display)
+  --throttle[=ms]        Jittered gap between --verify checks (default 5000ms)
+  --rediscover-404       Search for moved role when tracked company 404s (rides on --verify)
+  --parallel N           Concurrent workers for fetching (default 10, env SCAN_PARALLEL)
+  --fresh-only[=DAYS]    Only include jobs posted within window (default 7 days)
+  --company NAME         Filter to single company (case-insensitive substring)
+  --source TYPE          Filter by source: company | board | all (default all)
+  --help                 Show this help
+
+Examples:
+  node scan.mjs                          # Scan all companies + boards
+  node scan.mjs --dry-run                # Preview only
+  node scan.mjs --parallel 20            # Higher concurrency
+  node scan.mjs --source board           # Scan only job boards (LinkedIn, RemoteOK, etc.)
+  node scan.mjs --source company         # Scan only tracked companies (ATS APIs)
+  node scan.mjs --fresh-only             # Only jobs posted in last 7 days
+  node scan.mjs --fresh-only=14          # Only jobs posted in last 14 days
+  node scan.mjs --company anthropic      # Scan only Anthropic
+  node scan.mjs --verify --throttle=8000 # Verify with custom throttle
+```
+
+---
+
 ## Context Loading by Mode
 
 After determining the mode, load the necessary files before executing:

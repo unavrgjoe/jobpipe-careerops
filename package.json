@@ -29,6 +29,8 @@
     "scan:yc": "node scan-ats-full.mjs --seeds yc",
     "validate:portals": "node validate-portals.mjs",
     "verify:portals": "node verify-portals.mjs",
+    "benchmark:scan": "node scripts/benchmark-scan.mjs",
+    "verify:dedup": "node scripts/verify-dedup.mjs",
     "tracker": "node tracker.mjs",
     "find": "node find.mjs",
     "patterns": "node analyze-patterns.mjs",
@@ -64,6 +66,7 @@
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^17.0.0",
     "js-yaml": "^4.1.1",
-    "playwright": "1.61.1"
+    "playwright": "1.61.1",
+    "xmldom": "^0.6.0"
   }
 }

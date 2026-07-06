@@ -41,6 +41,7 @@ function cleanHimalayasUrl(value) {
   } catch {
     return '';
   }
+  return ''; // Added return statement for clarity
 }
 
 function locationText(value) {
@@ -66,6 +67,35 @@ function toEpochMs(value) {
   return undefined;
 }
 
+
+/**
+ * Parse Himalayas' public jobs API response. Exported for unit tests.
+ *
+ * Shape: `{ jobs: [...] }`, where each job currently carries `title`,
+ * `companyName`, `locationRestrictions`, `applicationLink`, `guid`,
+ * `pubDate`, and `companySlug`. `applicationLink` is preferred over `guid`
+ * and used as the dedup key after HTTPS + host validation.
+ *
+ * @param {any} item - raw parsed API job item
+ * @returns {import('./_types.js').Job}
+ */
+export function normalize(item) {
+  if (!item || typeof item !== 'object') {
+    return { title: '', url: '', company: '', location: '' }; // Return a default invalid job
+  }
+
+  const title = cleanText(item.title);
+  const url = cleanHimalayasUrl(item.applicationLink) || cleanHimalayasUrl(item.guid);
+
+  return {
+    title: title || '',
+    url: url || '',
+    company: cleanText(item.companyName),
+    location: locationText(item.locationRestrictions),
+    postedAt: toEpochMs(item.pubDate),
+  };
+}
+
 /** @type {Provider} */
 export default {
   id: 'himalayas',
@@ -88,42 +118,13 @@ export default {
     if (!json || !Array.isArray(json.jobs)) {
       throw new Error(`himalayas: unexpected API response - expected { jobs: [...] }, got keys: [${json ? Object.keys(json).join(', ') : 'null'}]`);
     }
-    return parseHimalayasResponse(json);
+    return json.jobs.map(normalize);
+  },
+
+  normalize, // Export the normalize function directly
+
+  rateLimit: {
+    requests: 30,
+    window: '1min',
   },
 };
-
-/**
- * Parse Himalayas' public jobs API response. Exported for unit tests.
- *
- * Shape: `{ jobs: [...] }`, where each job currently carries `title`,
- * `companyName`, `locationRestrictions`, `applicationLink`, `guid`,
- * `pubDate`, and `companySlug`. `applicationLink` is preferred over `guid`
- * and used as the dedup key after HTTPS + host validation.
- *
- * @param {unknown} json - raw parsed API response
- * @returns {Array<{title: string, url: string, company: string, location: string, postedAt?: number}>}
- */
-export function parseHimalayasResponse(json) {
-  if (!json || typeof json !== 'object' || !Array.isArray(json.jobs)) return [];
-
-  const jobs = [];
-  for (const item of json.jobs) {
-    if (!item || typeof item !== 'object') continue;
-
-    const title = cleanText(item.title);
-    if (!title) continue;
-
-    const url = cleanHimalayasUrl(item.applicationLink) || cleanHimalayasUrl(item.guid);
-    if (!url) continue;
-
-    jobs.push({
-      title,
-      url,
-      company: cleanText(item.companyName),
-      location: locationText(item.locationRestrictions),
-      postedAt: toEpochMs(item.pubDate),
-    });
-  }
-
-  return jobs;
-}

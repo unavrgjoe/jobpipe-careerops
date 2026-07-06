@@ -45,12 +45,20 @@ export default {
     return entry?.provider === 'weworkremotely' ? { url: FEED_URL } : null;
   },
 
+  normalize,
+
   async fetch(entry, ctx) {
     const feedUrl = assertWwrUrl(FEED_URL);
     // redirect:'error' prevents SSRF via server-side redirects; combined with
     // assertWwrUrl above it keeps the request pinned to weworkremotely.com.
     const text = await ctx.fetchText(feedUrl, { redirect: 'error' });
-    return parseWwrFeed(text, fallbackCompany(entry));
+    const jobs = parseWwrFeed(text, fallbackCompany(entry));
+    return jobs.map(normalize);
+  },
+
+  rateLimit: {
+    requests: 30,
+    window: '1min',
   },
 };
 
@@ -111,6 +119,22 @@ function splitTitle(rawTitle, defaultCompany) {
     if (company && title) return { company, title };
   }
   return { company: defaultCompany, title: text };
+}
+
+/**
+ * Normalize a We Work Remotely job to the standard schema.
+ * @param {import('./_types.js').Job} job - Raw job from parseWwrFeed
+ * @returns {import('./_types.js').Job}
+ */
+export function normalize(job) {
+  return {
+    title: job.title || '',
+    url: job.url || '',
+    company: job.company || '',
+    location: job.location || '',
+    description: '', // RSS feed doesn't include description at list level
+    postedAt: job.postedAt,
+  };
 }
 
 /**
